@@ -1,19 +1,33 @@
 # The Dungeon Lurks
 ## Added
-> 30 and 31st Oct 2026
-* Added 8 new colours: UI, D_UI, L_UI, BG, BLENDED, CYAN, D_CYAN, and L_CYAN
-* Added 2 new bosses, the Shadow and the Ranger
-* Added a bar to cut the UI off from the field
-* Added randomised boss orders (press R to toggle)
-* Added positional and enemy target functionality to the Homing Projectile
-> 1st Nov 2026
-* Added the Destructive Property to Projectiles
-* Added another 3 new bosses, The Magnet, The Decayed, and The Zombie Adventurer
+* Added 3 new bosses: The Jester, Illusionist, and Ship
+* Added bouncy projectiles
+* Player gives off particles when taking damage
+* Screen tinges red when you are damaged (below half)
+* Screen flashes red when you take damage
+* Save.json has been added
+* Upgrade (meta) menu has been added
+* Lots of loading and upgrade stuff has been added
+* MONEY!!!
+* Tons of attributes relating to the upgrades added to the player, including evasion and variable-defined shots rather than pre-defined shots
 
 ## General Changes
-> 31st Oct 2026
-* Removed the extention to the Solemn Defender's initial wall
+* Particles are now round
+* Abandoned upgrade system in favour of a cross-run Meta system
+* The upgrade and menu backgrounds use the default BG colour rather than Black
+* The Decayed's projectiles are now purple and give off dark purple particles
 
 ## Balancing Changes
-> 1st Nov 2026
-* Increased Twister's Super Cooldown to 15s
+* Reduced Summoner's damage to 1
+* Increased Summoner's Summon Cooldown to 20 seconds
+* Reduced Summoner's HP to 25
+* Increased Summoned's Shot Cooldown to 1.5 seconds
+* At half health, the Decayed shoots 2 projectiles
+* Player only regenerates 20% of their health upon defeating a boss
+
+## Bug Fixes
+* Warper now changes the gamescreen and gamescreen_rect correctly
+* Decayed's Projectiles now Appear
+
+## Known Bugs
+* Illusions immediately disappear

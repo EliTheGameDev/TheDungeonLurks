@@ -1,0 +1,14 @@
+{
+    "copper": 0,
+    "silver": 0,
+    "gold": 0,
+    "platinum": 0,
+    "upgrades": {
+        "Health Boost": 0,
+        "Rocketing Shots": 0,
+        "Stronger Shots": 0,
+        "Quicker Shots": 0,
+        "Evasion": 0,
+        "Swiftness": 0
+    }
+}

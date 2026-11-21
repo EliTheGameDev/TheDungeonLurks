@@ -1,24 +1,59 @@
 from random import *
+import json
+import tkinter as tk
+from tkinter import messagebox
 import pygame
 pygame.init()
 
 # Game Setup
-game_version = 0.3
-update_name = "Polish and Abolish"
+game_version = 0.4
+update_name = "Conquer Continually"
 
 screen = pygame.display.set_mode((560, 480))
 pygame.display.set_caption(f"The Dungeon Lurks - v{game_version} - {update_name}")
 clock = pygame.time.Clock()
 FPS = 60
-game_states = ["Menu", "Fight", "Upgrade"]
+game_states = ["Menu", "Fight", "Meta"]
 game_state = game_states[0]
-item_chosen = False
 random_bosses = False
+
+root = tk.Tk()
+root.withdraw()
+
+with open("save.json", "r") as f:
+    save_data = json.load(f)
+
+money = save_data["copper"] + int(save_data["silver"] * 10) + int(save_data["gold"] * 100) + int(save_data["platinum"] * 1000)
+
+def recalc_money():
+    md = str(money)
+    tmd = ""
+    plat = False
+    while len(md) < 4:
+        md = "0" + md
+    if int(list(md)[-1]) > 0: tmd += f"{int(list(md)[-1])} CP "
+    if int(list(md)[-2]) > 0: tmd += f"{int(list(md)[-2])} SP "
+    if int(list(md)[-3]) > 0: tmd += f"{int(list(md)[-3])} GP "
+    for x in list(md)[:-3]:
+        if int(x) > 0:
+            plat = True
+    if plat: 
+        for p in list(md)[:-3]: 
+            tmd += p
+        tmd += " PP"
+
+    if len(tmd) > 0:
+        return tmd
+    else:
+        return "Nothing"
+
+money_display = recalc_money()
+
+gamescreen = pygame.Surface((560, 432))
+gamescreen_rect = gamescreen.get_rect(topleft=(0, 48))
 
 # Fonts
 font = pygame.font.SysFont("Forte", 16)
-card_font = pygame.font.SysFont("@Magic R", 20)
-small_card_font = pygame.font.SysFont("@Magic R", 12)
 boss_font = pygame.font.SysFont("Impact", 24)
 boss_outline_font = pygame.font.SysFont("Impact", 26, bold=True)
 title_font = pygame.font.SysFont("Copperplate Gothic", 48)
@@ -61,6 +96,8 @@ L_UI = (63, 55, 31)
 BG = (15, 11, 0)
 BLENDED = (11, 7, 0)
 
+redness = 0
+
 # Functions
 def inverse_direction(direction):
     if direction == "N":
@@ -85,30 +122,22 @@ def inverse_direction(direction):
 def adjacent_direction(direction):
     if direction == "N":
         return ["NW", "NE"]
-    if direction == "E":
+    elif direction == "E":
         return ["NE", "SE"]
-    if direction == "S":
+    elif direction == "S":
         return ["SE", "SW"]
-    if direction == "W":
+    elif direction == "W":
         return["SW", "NW"]
-
-def wrap_text(text, font, max_width):
-    words = text.split()
-    lines = []
-    current_line = ""
-
-    for word in words:
-        candidate = f"{current_line} {word}".strip()
-        if current_line and font.size(candidate)[0] > max_width:
-            lines.append(current_line)
-            current_line = word
-        else:
-            current_line = candidate
-
-    if current_line:
-        lines.append(current_line)
-
-    return lines
+    elif direction == "NE":
+        return ["N", "E"]
+    elif direction == "SE":
+        return ["E", "S"]
+    elif direction == "SW":
+        return ["S", "W"]
+    elif direction == "NW":
+        return ["W", "N"]
+    else:
+        return ["N", "S"]
 
 # Player and Enemy Classes
 class Player(pygame.sprite.Sprite):
@@ -129,7 +158,27 @@ class Player(pygame.sprite.Sprite):
         self.ult_time = 0
         self.ult_duration = 3000
 
-        self.upgrades = []
+        # Upgradable Attributes
+        self.shot_speed = 16
+        self.shot_damage = 1
+        self.shot_shape = (8, 16)
+        self.shot_colour = GREEN
+        self.shot_particles = (True, D_GREEN)
+        self.shot_homing = False
+        self.shot_bouncy = 0
+        self.shot_seeking = False
+
+        self.super_speed = 2
+        self.super_damage = 2
+        self.super_shape = (108, 24)
+        self.super_colour = YELLOW
+        self.super_particles = (False, YELLOW)
+        self.super_homing = False
+        self.super_bouncy = 0
+        self.super_seeking = False
+
+        self.ult_secondary = None
+        self.evasion = 0
         
     def update(self):
         keys = pygame.key.get_pressed()
@@ -146,10 +195,10 @@ class Player(pygame.sprite.Sprite):
             self.rect.x += self.speed
             self.direction = "E"
         if keys[pygame.K_SPACE] and self.shot_cool + self.shot_time < pygame.time.get_ticks():
-            main_group.add(Projectile(self.rect.center, (8, 16), 1, 16, self.direction, GREEN, particles=[True, D_GREEN], destructive=True))
+            main_group.add(Projectile(self.rect.center, self.shot_shape, self.shot_damage, self.shot_speed, self.direction, self.shot_colour, particles=self.shot_particles, seeking=self.shot_seeking, destructive=True))
             self.shot_time = pygame.time.get_ticks()
         if keys[pygame.K_e] and self.super_cool + self.super_time < pygame.time.get_ticks():
-            main_group.add(Projectile(self.rect.center, (108, 24), 2, 2, self.direction, YELLOW, particles=[False, YELLOW], destructive=True))
+            main_group.add(Projectile(self.rect.center, self.super_shape, self.super_damage, self.super_speed, self.direction, self.super_colour, particles=self.super_particles, seeking=self.super_seeking, destructive=True))
             self.super_time = pygame.time.get_ticks()
         if keys[pygame.K_q] and self.health <= 5 and not self.ult_used:
             self.health = self.max_health
@@ -157,12 +206,25 @@ class Player(pygame.sprite.Sprite):
             self.ult_used = True
         
         if self.ult_time + self.ult_duration >= pygame.time.get_ticks() and self.ult_used:
-            self.health = self.max_health
             main_group.add(Particle(self.rect.center, (4, 4), WHITE, 1, 3), Particle(self.rect.center, (4, 4), WHITE, 2, 3), Particle(self.rect.center, (4, 4), WHITE, 3, 3), Particle(self.rect.center, (4, 4), WHITE, 4, 3))
         
         if self.health <= 0:
             self.kill()
             print("GAME OVER")
+    
+    def take_damage(self, damage, evasion_mod=0):
+        if uniform(0, 1) > self.evasion + evasion_mod:
+            if not (self.ult_time + self.ult_duration >= pygame.time.get_ticks() and self.ult_used):
+                self.health -= damage
+                for i in range(20*damage):
+                    main_group.add(Particle(self.rect.center, (6, 6), RED, randint(1, 4), 3))
+                global redness
+                redness += damage * 4
+            else:
+                self.health = self.max_health
+    
+    def abort(self):
+        pass
 
 class Enemy(pygame.sprite.Sprite):
     def __init__(self):
@@ -170,6 +232,9 @@ class Enemy(pygame.sprite.Sprite):
 
     def take_damage(self, damage):
         self.health -= damage
+    
+    def abort(self):
+        self.kill()
 
 class Scaffold(Enemy):
     def __init__(self, pos):
@@ -219,6 +284,9 @@ class Scaffold(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(1, 10)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -281,6 +349,9 @@ class Mage(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(3, 10)
+            money_display = recalc_money()
             self.kill()
 
 class Bomber(Enemy):
@@ -335,6 +406,9 @@ class Bomber(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(3, 10)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -409,6 +483,9 @@ class Cleric(Enemy):
             self.seek = False 
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(3, 10)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -460,14 +537,23 @@ class Warper(Enemy):
             self.shot_time = pygame.time.get_ticks()
         
         if self.super_cool + self.super_time < pygame.time.get_ticks():
-            screen = pygame.display.set_mode(choice(self.screen_presets))
+            global gamescreen, gamescreen_rect
+            screen_size = choice(self.screen_presets)
+            screen = pygame.display.set_mode(screen_size)
+            gamescreen = pygame.Surface((screen_size[0], screen_size[1] - 48))
+            gamescreen_rect = gamescreen.get_rect(topleft=(0, 48))
             self.rect.center = (24, 72)
             player.rect.center = (screen.get_width(), screen.get_height())
             
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(3, 10)
+            money_display = recalc_money()
             screen = pygame.display.set_mode((560, 480))
+            gamescreen = pygame.Surface((560, 432))
+            gamescreen_rect = gamescreen.get_rect(topleft=(0, 48))
             self.kill()
         
         elif self.health > self.max_health:
@@ -565,6 +651,9 @@ class Defender(Enemy):
             self.super_cool = self.health * 40 + 800
 
         if self.health <= 0:
+            global money, money_display
+            money += randint(10, 20)
+            money_display = recalc_money()
             self.kill()
         
         if self.health > self.max_health:
@@ -639,6 +728,9 @@ class Twister(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(5, 12)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -708,6 +800,9 @@ class Vampire(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(15, 25)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -726,7 +821,7 @@ class Summoned(Enemy):
         self.speed = 2
         self.max_health = self.health = 5
         self.direction = "N"
-        self.shot_cool = 1000
+        self.shot_cool = 1500
         self.shot_time = 0
         
     def update(self):
@@ -769,11 +864,11 @@ class Summoner(Enemy):
         self.alt_colour = GREEN
         
         self.speed = 1
-        self.max_health = self.health = 30
+        self.max_health = self.health = 25
         self.direction = "N"
         self.shot_cool = 2000
         self.shot_time = 0
-        self.super_cool = 10000
+        self.super_cool = 20000
         self.super_time = 0
         
     def update(self):
@@ -797,9 +892,9 @@ class Summoner(Enemy):
                     self.direction = "N"
         
         if self.shot_cool + self.shot_time < pygame.time.get_ticks():
-            main_group.add(Projectile(self.rect.center, (10, 20), 2, 16, self.direction, D_ORANGE, target_type=Player, particles=[True, L_GREEN]))
-            main_group.add(Projectile(self.rect.center, (10, 20), 2, 16, self.direction, D_ORANGE, target_type=Player, particles=[True, L_GREEN], delay=30))
-            main_group.add(Projectile(self.rect.center, (10, 20), 2, 16, self.direction, D_ORANGE, target_type=Player, particles=[True, L_GREEN], delay=45))
+            main_group.add(Projectile(self.rect.center, (10, 20), 1, 16, self.direction, D_ORANGE, target_type=Player, particles=[True, L_GREEN]))
+            main_group.add(Projectile(self.rect.center, (10, 20), 1, 16, self.direction, D_ORANGE, target_type=Player, particles=[True, L_GREEN], delay=30))
+            main_group.add(Projectile(self.rect.center, (10, 20), 1, 16, self.direction, D_ORANGE, target_type=Player, particles=[True, L_GREEN], delay=45))
             self.shot_time = pygame.time.get_ticks()
         
         if self.super_cool + self.super_time < pygame.time.get_ticks():
@@ -808,6 +903,9 @@ class Summoner(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(5, 12)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -878,6 +976,9 @@ class Artificer(Enemy):
             self.ability_time = pygame.time.get_ticks()
 
         if self.health <= 0:
+            global money, money_display
+            money += randint(5, 12)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -983,6 +1084,9 @@ class Sorcerer(Enemy):
         screen.blit(self.metamagic_text, (self.rect.x, self.rect.y - 32))
 
         if self.health <= 0:
+            global money, money_display
+            money += randint(5, 12)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -1038,6 +1142,9 @@ class Shadow(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(8, 15)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -1115,6 +1222,9 @@ class Ranger(Enemy):
             self.burst_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(8, 15)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -1204,6 +1314,9 @@ class Magnet(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(8, 15)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
@@ -1254,7 +1367,8 @@ class Decayed(Enemy):
                     self.direction = "N"
         
         if self.shot_cool + self.shot_time < pygame.time.get_ticks():
-            main_group.add(HomingProjectile((0, 0), (8, 8), 2, 2, self.direction, WHITE, target_type=(Player, Enemy), particles=[True, WHITE], speed_mult=1.5))
+            main_group.add(HomingProjectile((8, 56), (8, 8), 2, 2, "SE", PURPLE, target_type=(Player, Enemy), particles=[True, D_PURPLE], speed_mult=1.5))
+            if self.health <= 15: main_group.add(HomingProjectile((552, 472), (8, 8), 2, 2, "NW", PURPLE, target_type=(Player, Enemy), particles=[True, D_PURPLE], speed_mult=1.5))
             self.shot_time = pygame.time.get_ticks()
         
         if self.super_cool + self.super_time < pygame.time.get_ticks():
@@ -1262,12 +1376,15 @@ class Decayed(Enemy):
             self.super_time = pygame.time.get_ticks()
         
         if self.health <= 0:
+            global money, money_display
+            money += randint(8, 15)
+            money_display = recalc_money()
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
         
     def take_damage(self, damage):
-        player.health -= damage
+        player.take_damage(damage)
 
 class Zombie(Enemy):
     def __init__(self, pos):
@@ -1328,15 +1445,251 @@ class Zombie(Enemy):
             self.health = self.max_health
             main_group.add(Particle(self.rect.center, (4, 4), WHITE, 1, 3), Particle(self.rect.center, (4, 4), WHITE, 2, 3), Particle(self.rect.center, (4, 4), WHITE, 3, 3), Particle(self.rect.center, (4, 4), WHITE, 4, 3))
         
+        if self.health <= 0:
+            global money, money_display
+            money += randint(20, 30)
+            money_display = recalc_money()
+            self.kill()
+        elif self.health > self.max_health:
+            self.health = self.max_health
+
+class Jester(Enemy):
+    def __init__(self, pos):
+        super().__init__()
+        self.image = pygame.Surface((64, 64))
+        self.image.fill(RED)
+        self.rect = self.image.get_rect(center=pos)
+        
+        self.name = "The Jester"
+        self.colour = RED
+        self.alt_colour = WHITE
+        
+        self.speed = 3
+        self.max_health = self.health = 30
+        self.direction = "N"
+        self.shot_cool = 2000
+        self.shot_time = 0
+        self.super_cool = 12000
+        self.super_time = 0
+        
+    def update(self):
+        if abs(player.rect.x - self.rect.x) > abs(player.rect.y - self.rect.y):
+            if player.rect.x > self.rect.x:
+                if self.rect.x < screen.get_width() - self.rect.w:
+                    self.rect.x += self.speed
+                    self.direction = "E"
+            else:
+                if self.rect.x > 0:
+                    self.rect.x -= self.speed
+                    self.direction = "W"
+        else:
+            if player.rect.y > self.rect.y:
+                if self.rect.y < screen.get_height() - self.rect.h:
+                    self.rect.y += self.speed
+                    self.direction = "S"
+            else:
+                if self.rect.y > 48:
+                    self.rect.y -= self.speed
+                    self.direction = "N"
+        
+        if self.shot_cool + self.shot_time < pygame.time.get_ticks():
+            main_group.add(BouncingProjectile(self.rect.center, (32, 32), 1, 12, self.direction, RED, target_type=Player, bounces=10, particles=[True, WHITE]))
+            self.shot_time = pygame.time.get_ticks()
+        
+        if self.super_cool + self.super_time < pygame.time.get_ticks():
+            rand_num = randint(0, 30)
+            rand_range = list(range(rand_num * 16 + 8, rand_num * 16 + 88))
+            for i in range(8,560,16):
+                if not i in rand_range: main_group.add(Projectile((i, 456), (12, 48), 1, 32, "N", YELLOW, target_type=Player, particles=[True, WHITE], delay=i))
+            self.super_time = pygame.time.get_ticks()
+        
+        if self.health <= 0:
+            global money, money_display
+            money += randint(10, 18)
+            money_display = recalc_money()
+            self.kill()
+        elif self.health > self.max_health:
+            self.health = self.max_health
+
+class Illusionist(Enemy):
+    def __init__(self, pos):
+        super().__init__()
+        self.image = pygame.Surface((24, 24))
+        self.image.fill(WHITE)
+        self.rect = self.image.get_rect(center=pos)
+        
+        self.name = "The Illusionist"
+        self.colour = WHITE
+        self.alt_colour = L_GREY
+        
+        self.speed = 2
+        self.max_health = self.health = 25
+        self.direction = "N"
+        self.shot_cool = 1200
+        self.shot_time = 0
+        self.super_cool = 10000
+        self.super_time = 0
+        self.tp_time = 5000
+        self.tp_used = True
+
+        self.illusion_pos = [(0, 0), (0, 0), (0, 0)]
+        
+    def update(self):
+        if abs(player.rect.x - self.rect.x) > abs(player.rect.y - self.rect.y):
+            if player.rect.x > self.rect.x:
+                if self.rect.x < screen.get_width() - self.rect.w:
+                    self.rect.x += self.speed
+                    self.direction = "E"
+            else:
+                if self.rect.x > 0:
+                    self.rect.x -= self.speed
+                    self.direction = "W"
+        else:
+            if player.rect.y > self.rect.y:
+                if self.rect.y < screen.get_height() - self.rect.h:
+                    self.rect.y += self.speed
+                    self.direction = "S"
+            else:
+                if self.rect.y > 48:
+                    self.rect.y -= self.speed
+                    self.direction = "N"
+        
+        if self.shot_cool + self.shot_time < pygame.time.get_ticks():
+            main_group.add(BouncingProjectile(self.rect.center, (8, 8), 2, 8, self.direction, WHITE, target_type=Player, bounces=0, particles=[False, WHITE]))
+            main_group.add(BouncingProjectile(self.rect.center, (8, 8), 2, 8, inverse_direction(self.direction), WHITE, target_type=Player, bounces=0, particles=[False, WHITE]))
+            self.shot_time = pygame.time.get_ticks()
+        
+        if self.super_cool + self.super_time < pygame.time.get_ticks():
+            self.tp_used = False
+            for n in range(3): main_group.add(Illusion((randint(0, screen.get_width() - 24), randint(48, screen.get_height() - 24)), n, (self.max_health - self.health) // 5))
+            self.super_time = pygame.time.get_ticks()
+        
+        if self.super_cool + self.tp_time < pygame.time.get_ticks() and not self.tp_used:
+            self.rect.center = choice(self.illusion_pos)
+            self.tp_used = True
+            self.tp_time = pygame.time.get_ticks()
+        
+        if self.health <= 0:
+            global money, money_display
+            money += randint(10, 18)
+            money_display = recalc_money()
+            self.kill()
+        elif self.health > self.max_health:
+            self.health = self.max_health
+
+    def take_damage(self, damage):
+        if self.tp_used: self.health -= damage
+        else: pass
+
+class Illusion(Enemy):
+    def __init__(self, pos, number, tier):
+        super().__init__()
+        self.image = pygame.Surface((24, 24))
+        self.image.fill(WHITE)
+        self.rect = self.image.get_rect(center=pos)
+        
+        self.number = number
+        self.colour = WHITE
+        self.alt_colour = L_GREY
+        
+        self.speed = 2
+        self.max_health = self.health = 999
+        self.direction = "N"
+        self.shot_cool = 1200
+        self.shot_time = 0
+
+        self.tier = tier
+        
+    def update(self):
+        if randint(0, self.tier):
+            if abs(player.rect.x - self.rect.x) > abs(player.rect.y - self.rect.y):
+                if player.rect.x > self.rect.x:
+                    if self.rect.x < screen.get_width() - self.rect.w:
+                        self.rect.x += self.speed
+                        self.direction = "E"
+                else:
+                    if self.rect.x > 0:
+                        self.rect.x -= self.speed
+                        self.direction = "W"
+            else:
+                if player.rect.y > self.rect.y:
+                    if self.rect.y < screen.get_height() - self.rect.h:
+                        self.rect.y += self.speed
+                        self.direction = "S"
+                else:
+                    if self.rect.y > 48:
+                        self.rect.y -= self.speed
+                        self.direction = "N"
+
+        else: 
+            if boss.name == "The Illusionist":
+                if not boss.tp_used:
+                    boss.illusion_pos[self.number] = self.rect.center
+                else:
+                    self.kill()
+            else:
+                self.kill()
+        
+        if self.shot_cool + self.shot_time < pygame.time.get_ticks():
+            main_group.add(BouncingProjectile(self.rect.center, (8, 8), 0, 8, self.direction, WHITE, target_type=Player, bounces=0, particles=[False, WHITE]))
+            main_group.add(BouncingProjectile(self.rect.center, (8, 8), 0, 8, inverse_direction(self.direction), WHITE, target_type=Player, bounces=0, particles=[False, WHITE]))
+            self.shot_time = pygame.time.get_ticks()
         
         if self.health <= 0:
             self.kill()
         elif self.health > self.max_health:
             self.health = self.max_health
 
+class Ship(Enemy):
+    def __init__(self, pos):
+        super().__init__()
+        self.image = pygame.Surface((24, 128))
+        self.image.fill(D_GREY)
+        self.rect = self.image.get_rect(center=pos)
+        
+        self.name = "The Ship"
+        self.colour = D_GREY
+        self.alt_colour = BLACK
+        
+        self.speed = 1
+        self.max_health = self.health = 50
+        self.direction = "N"
+        self.shot_cool = 800
+        self.shot_time = 0
+        self.super_cool = 3000
+        self.super_time = 0
+        
+    def update(self):
+        if player.rect.y > self.rect.y:
+            if self.rect.y < screen.get_height() - self.rect.h:
+                self.rect.y += self.speed
+                self.direction = "S"
+        else:
+            if self.rect.y > 48:
+                self.rect.y -= self.speed
+                self.direction = "N"
+        
+        if self.shot_cool + self.shot_time < pygame.time.get_ticks():
+            main_group.add(Projectile(self.rect.center, (20, 32), 3, 20, "W", RED, target_type=Player, particles=[True, D_RED], seeking=True))
+            self.shot_time = pygame.time.get_ticks()
+        
+        if self.super_cool + self.super_time < pygame.time.get_ticks():
+            main_group.add(BouncingProjectile((self.rect.centerx - 20, self.rect.centery - 64), (12, 12), 1, 12, "NW", PINK, target_type=Player, bounces=3, particles=[True, D_PINK]))
+            main_group.add(BouncingProjectile((self.rect.centerx - 20, self.rect.centery), (12, 12), 1, 12, "W", PINK, target_type=Player, bounces=3, particles=[True, D_PINK]))
+            main_group.add(BouncingProjectile((self.rect.centerx - 20, self.rect.centery + 64), (12, 12), 1, 12, "SW", PINK, target_type=Player, bounces=3, particles=[True, D_PINK]))
+            self.super_time = pygame.time.get_ticks()
+        
+        if self.health <= 0:
+            global money, money_display
+            money += randint(10, 18)
+            money_display = recalc_money()
+            self.kill()
+        elif self.health > self.max_health:
+            self.health = self.max_health
+
 # Weapon Classes
 class Projectile(pygame.sprite.Sprite):
-    def __init__(self, pos, size, damage, speed, direction, colour, target_type=Enemy, particles=[True, WHITE], seeking=False, delay=0, drain=0, alpha=255, destructive=False): # Particles list is 'particles enabled' then 'particle colour'
+    def __init__(self, pos, size, damage, speed, direction, colour, target_type=Enemy, particles=[True, WHITE], seeking=False, delay=0, drain=0, alpha=255, destructive=False, evasion_resist=0): # Particles list is 'particles enabled' then 'particle colour'
         super().__init__()
         self.image = pygame.Surface(size)
         if direction in ["W", "E"]:
@@ -1358,6 +1711,7 @@ class Projectile(pygame.sprite.Sprite):
         self.delay = delay
         self.drain = drain
         self.destructive = destructive
+        self.evasion_resist = evasion_resist
         
         if seeking:
             if self.target_type == Player:
@@ -1428,7 +1782,7 @@ class Projectile(pygame.sprite.Sprite):
                         sprite.take_damage(self.damage)
                         player.health += self.drain
                     else:
-                        sprite.health -= self.damage
+                        sprite.take_damage(self.damage, evasion_mod=-self.evasion_resist)
                         boss.health += self.drain
                     self.kill()
                     break
@@ -1451,14 +1805,17 @@ class Projectile(pygame.sprite.Sprite):
                 if self.attack_time + 500 < pygame.time.get_ticks():
                     self.kill()
         
-            if not self.rect.colliderect(screen.get_rect()) and not self.seeking:
+            if not self.rect.colliderect(gamescreen_rect) and not self.seeking:
                 self.kill()
         
         if self.delay > 0:
             self.delay -= 1
+    
+    def abort(self):
+        self.kill()
 
 class HomingProjectile(pygame.sprite.Sprite):
-    def __init__(self, pos, size, damage, speed, direction, colour, target_type=Enemy, particles=[True, WHITE], seeking=False, delay=0, drain=0, alpha=255, donthit=(), speed_mult=1): # Particles list is 'particles enabled' then 'particle colour'
+    def __init__(self, pos, size, damage, speed, direction, colour, target_type=Enemy, particles=[True, WHITE], seeking=False, delay=0, drain=0, alpha=255, donthit=(), speed_mult=1, resist_evasion=0.2): # Particles list is 'particles enabled' then 'particle colour'
         super().__init__()
         self.image = pygame.Surface(size)
         if direction in ["W", "E"]:
@@ -1481,6 +1838,7 @@ class HomingProjectile(pygame.sprite.Sprite):
         self.drain = drain
         self.dont_hit = donthit
         self.speed_mult = speed_mult
+        self.resist_evasion = resist_evasion
 
         self.vx = 0
         self.vy = 0
@@ -1659,7 +2017,7 @@ class HomingProjectile(pygame.sprite.Sprite):
                                 sprite.take_damage(self.damage)
                                 player.health += self.drain
                             elif isinstance(sprite, Player):
-                                sprite.health -= self.damage
+                                sprite.take_damage(self.damage, evasion_mod=-self.resist_evasion)
                                 boss.health += self.drain
                             else:
                                 sprite.health -= self.damage
@@ -1683,20 +2041,151 @@ class HomingProjectile(pygame.sprite.Sprite):
                 if self.attack_time + 500 < pygame.time.get_ticks():
                     self.kill()
         
-            if not self.rect.colliderect(screen.get_rect()) and not self.seeking:
+            if not self.rect.colliderect(gamescreen_rect) and not self.seeking:
                 self.kill()
         
         if self.delay > 0:
             self.delay -= 1
+        
+        def abort(self):
+            self.kill()
+
+class BouncingProjectile(pygame.sprite.Sprite):
+    def __init__(self, pos, size, damage, speed, direction, colour, target_type=Enemy, particles=[True, WHITE], bounces=1, seeking=False, delay=0, drain=0, destructive=False, evasion_resist=0): # Particles list is 'particles enabled' then 'particle colour'
+        super().__init__()
+        self.image = pygame.Surface(size, pygame.SRCALPHA)
+        pygame.draw.circle(self.image, colour, (size[0] // 2, size[1] // 2), size[0] // 2)
+        self.rect = self.image.get_rect(center=pos)
+        self.damage = damage
+        self.speed = speed
+        self.direction = direction
+        self.target_type = target_type
+        self.particles = particles[0]
+        self.part_colour = particles[1]
+        self.seeking = seeking
+        self.delay = delay
+        self.drain = drain
+        self.destructive = destructive
+        self.bounces = bounces
+        self.evasion_resist = evasion_resist
+        if seeking:
+            if self.target_type == Player:
+                self.target = player.rect.center
+            elif self.target_type == Enemy:
+                self.target = boss.rect.center
+            self.attack_time = pygame.time.get_ticks() + 2000
+            self.attacked = False
+            main_group.add(ParticleEmitter(self.target, (4, 4), L_RED, 4, 1000, 3))
+        
+    def update(self):
+        if self.delay <= 0:
+            if self.direction == "N":
+                self.rect.y -= self.speed
+                if self.particles:
+                    if randint(1, 2) == 1:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 3, self.speed // 0.75))
+                    else:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 2, self.speed // 0.75))
+            if self.direction == "E":
+                self.rect.x += self.speed
+                if self.particles:
+                    if randint(1, 2) == 1:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 4, self.speed // 0.75))
+                    else:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 3, self.speed // 0.75))
+            if self.direction == "S":
+                self.rect.y += self.speed
+                if self.particles:
+                    if randint(1, 2) == 1:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 1, self.speed // 0.75))
+                    else:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 4, self.speed // 0.75))
+            if self.direction == "W":
+                self.rect.x -= self.speed
+                if self.particles:
+                    if randint(1, 2) == 1:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 2, self.speed // 0.75))
+                    else:
+                        main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 1, self.speed // 0.75))
+            if self.direction == "NE":
+                self.rect.x += self.speed // 2
+                self.rect.y -= self.speed // 2
+                if self.particles:
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 3, self.speed//0.75))
+            if self.direction == "SE":
+                self.rect.x += self.speed // 2
+                self.rect.y += self.speed // 2
+                if self.particles:
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 4, self.speed//0.75))
+            if self.direction == "SW":
+                self.rect.x -= self.speed // 2
+                self.rect.y += self.speed // 2
+                if self.particles:
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 1, self.speed//0.75))
+            if self.direction == "NW":
+                self.rect.x -= self.speed // 2
+                self.rect.y -= self.speed // 2
+                if self.particles:
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 2, self.speed//0.75))
+
+            for sprite in main_group:
+                if isinstance(sprite, Projectile) and sprite.destructive and not self.destructive and self.rect.colliderect(sprite.rect):
+                    self.kill()
+                    break
+                if isinstance(sprite, self.target_type) and self.rect.colliderect(sprite.rect):
+                    if isinstance(sprite, Enemy):
+                        sprite.take_damage(self.damage)
+                        player.health += self.drain
+                    else:
+                        sprite.take_damage(self.damage, evasion_mod=-self.evasion_resist)
+                        boss.health += self.drain
+                    self.kill()
+                    break
+        
+            if self.seeking:
+                if self.attack_time < pygame.time.get_ticks() and not self.attacked:
+                    self.destructive = True
+                    self.image = pygame.transform.scale(self.image, (8, 8))
+                    self.image.fill(D_RED)
+                    self.rect = self.image.get_rect(center=self.target)
+                    self.attacked = True
+                    self.part_colour = ORANGE
+                if self.attack_time < pygame.time.get_ticks():
+                    self.image = pygame.transform.scale(self.image, (self.rect.width + 2, self.rect.height + 2))
+                    self.rect = self.image.get_rect(center=self.target)
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 1, self.speed // 0.75))
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 2, self.speed // 0.75))
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 3, self.speed // 0.75))
+                    main_group.add(Particle(self.rect.center, (4, 4), self.part_colour, 4, self.speed // 0.75))
+                if self.attack_time + 500 < pygame.time.get_ticks():
+                    self.kill()
+        
+            if not self.rect.colliderect(gamescreen_rect) and not self.seeking:
+                random_dir = randint(1, 3)
+                if random_dir == 1: self.direction = inverse_direction(self.direction)
+                elif random_dir == 2: self.direction = adjacent_direction(inverse_direction(self.direction))[0]
+                elif random_dir == 3: self.direction = adjacent_direction(inverse_direction(self.direction))[1]
+                self.bounces -= 1
+                if self.bounces < 0:
+                    self.kill()
+                if self.rect.x <= gamescreen_rect.left: self.rect.x = gamescreen_rect.left + 16
+                if self.rect.x >= gamescreen_rect.right - self.rect.width: self.rect.x = gamescreen_rect.right - 16
+                if self.rect.y <= gamescreen_rect.top: self.rect.y = gamescreen_rect.top + 16
+                if self.rect.y >= gamescreen_rect.bottom - self.rect.height: self.rect.y = gamescreen_rect.bottom - 16
+
+        if self.delay > 0:
+            self.delay -= 1
+        
+    def abort(self):
+        self.kill()
 
 # Visual Classes
 class Particle(pygame.sprite.Sprite):
     def __init__(self, pos, size, colour, quadrant, speed, strict_move=False):
         super().__init__()
-        self.image = pygame.Surface(size)
-        self.image.fill(colour)
+        self.image = pygame.Surface(size, pygame.SRCALPHA)
+        pygame.draw.circle(self.image, colour, (size[0] // 2, size[1] // 2), size[0] // 2)
         self.rect = self.image.get_rect(center=pos)
-        
         self.quadrant = quadrant
         self.speed = speed
         self.strict_move = strict_move
@@ -1735,11 +2224,14 @@ class Particle(pygame.sprite.Sprite):
                 else:
                     self.rect.x -= self.speed
         
-        if not self.rect.colliderect(screen.get_rect()):
+        if not self.rect.colliderect(gamescreen_rect):
             self.kill()
         
         if random() < 0.1:
             self.kill()
+    
+    def abort(self):
+        self.kill()
 
 class ParticleEmitter(pygame.sprite.Sprite):
     def __init__(self, pos, size, colour, speed, duration, emissionRate=1):
@@ -1762,113 +2254,55 @@ class ParticleEmitter(pygame.sprite.Sprite):
         
         if self.duration < pygame.time.get_ticks():
             self.kill()
-
-# Upgrades
-class Upgrade(pygame.sprite.Sprite):
-    def __init__(self, name, rarity, tier, effect1, effect2=None):
-        super().__init__()
-        self.image = pygame.Surface((160, 240))
-        self.image.fill(M_GREY)
-        self.rect = self.image.get_rect(center=(0, 0))
-        
-        self.name = name
-        self.rarity = rarity   # 1 - Common, 2 - Uncommon, 3 - Rare, 4 - Epic, 5 - Legendary
-        self.tier = tier       # 1 - Basic, 2/3 - Decent, 4/5 - Good, 6/7 - Great, 8/9 - Fantastic, 10 - Perfect
-        self.weight = (16 - (rarity * 3)) * (21 - (tier * 2))
-        self.activated = False
-        
-        if rarity == 1:
-            self.rarity_name = "Common"
-            self.rarity_colour = BLACK
-        elif rarity == 2:
-            self.rarity_name = "Uncommon"
-            self.rarity_colour = D_BLUE
-        elif rarity == 3:
-            self.rarity_name = "Rare"
-            self.rarity_colour = RED
-        elif rarity == 4:
-            self.rarity_name = "Epic"
-            self.rarity_colour = PURPLE
-        elif rarity == 5:
-            self.rarity_name = "Legendary"
-            self.rarity_colour = L_ORANGE
-        else:
-            self.rarity_name = "Unknown"
-            self.rarity_colour = White
-        
-        if tier == 1:
-            self.tier_name = "Basic"
-        elif tier in [2, 3]:
-            self.tier_name = "Decent"
-        elif tier in [4, 5]:
-            self.tier_name = "Good"
-        elif tier in [6, 7]:
-            self.tier_name = "Great"
-        elif tier in [8, 9]:
-            self.tier_name = "Fantastic"
-        elif tier == 10:
-            self.tier_name = "Perfect"
-        else:
-            self.tier_name = "Unknown"
-        
-        self.effect1 = effect1  # Effects are: [Name, Description, Severity]
-        self.eff1_desc = f"{effect1[0]}: {effect1[1].replace('$$', f'{effect1[2]}')}"
-        if effect2:
-            self.effect2 = effect2
-            self.eff2_desc = f"{effect2[0]}: {effect2[1].replace('$$', f'{effect2[2]}')}"
-        else: self.eff2_desc = ""
     
-    def update(self):
-        name_text = card_font.render(self.name, True, WHITE)
-        self.image.blit(name_text, (4, 0))
-        rarity_text = small_card_font.render(f"{self.rarity_name} | {self.tier_name} ({self.tier})", True, self.rarity_colour)
-        self.image.blit(rarity_text, (4, 24))
-        
-        for text, y in ((self.eff1_desc, 160), (self.eff2_desc, 200)):
-            for line in wrap_text(text, small_card_font, self.image.get_width() - 8):
-                self.image.blit(small_card_font.render(line, True, WHITE), (4, y))
-                y += small_card_font.get_linesize()
-        
-        mouse = pygame.mouse.get_pressed()
-        mouse_pos = pygame.mouse.get_pos()
-        if self.rect.collidepoint(mouse_pos[0], mouse_pos[1]) and mouse[0]:
-            global game_state, item_chosen
-            player.upgrades.append(self)
-            game_state = "Fight"
-            item_chosen = True
-
-upgrade_list = [
-    Upgrade("Rapid Fire", 1, 1, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 5]),
-    Upgrade("Rapid Fire", 1, 2, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 10]),
-    Upgrade("Rapid Fire", 1, 3, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 15]),
-    Upgrade("Rapid Fire", 1, 4, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 20]),
-    Upgrade("Rapid Fire", 1, 5, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 25]),
-    Upgrade("Rapid Fire", 1, 6, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 30]),
-    Upgrade("Rapid Fire", 1, 7, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 35]),
-    Upgrade("Rapid Fire", 1, 8, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 40]),
-    Upgrade("Rapid Fire", 1, 9, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 45]),
-    Upgrade("Rapid Fire", 1, 10, ["Increased Attack Speed", "Your attack speed is increased by $$%.", 50])
-]
-
-upgrade_pool = []
-for upgrade in upgrade_list:
-    for i in range(upgrade.weight):
-        upgrade_pool.append(upgrade)
+    def abort(self):
+        self.kill()
 
 # Groups
 player = Player((16, 464))
 boss_list = [
     Mage((280, 240)), Bomber((280, 240)), Warper((280, 240)), Cleric((280, 240)), Defender((280, 264)), 
     Twister((280, 240)), Summoner((280, 240)), Artificer((280, 240)), Sorcerer((280, 240)), Vampire((280, 240)), 
-    Ranger((280, 240)), Decayed((280, 240)), Shadow((280, 240)), Magnet((280, 240)), Zombie((280, 240))
+    Ranger((280, 240)), Shadow((280, 240)), Magnet((280, 240)), Decayed((280, 240)), Zombie((280, 240)),
+    Illusionist((280, 240)), Jester((280, 240)), Ship((520, 240))
     ]
+
+def reset_bosses():
+    global boss_list
+    boss_list = [
+    Mage((280, 240)), Bomber((280, 240)), Warper((280, 240)), Cleric((280, 240)), Defender((280, 264)), 
+    Twister((280, 240)), Summoner((280, 240)), Artificer((280, 240)), Sorcerer((280, 240)), Vampire((280, 240)), 
+    Ranger((280, 240)), Shadow((280, 240)), Magnet((280, 240)), Decayed((280, 240)), Zombie((280, 240)),
+    Illusionist((280, 240)), Jester((280, 240)), Ship((520, 240))
+    ]
+
 boss = None
 main_group = pygame.sprite.Group()
 main_group.add(player)
-upgrade_group = pygame.sprite.Group()
 selected = False
 
+upgrades = [
+    {"name": "Health Boost", "cost": "0025", "level": 0, "max_level": 10, "effect": lambda: setattr(player, "max_health", player.max_health + 5)},
+    {"name": "Rocketing Shots", "cost": "0020", "level": 0, "max_level": 10, "effect": lambda: setattr(player, "shot_speed", player.shot_speed + 2)},
+    {"name": "Stronger Shots", "cost": "0080", "level": 0, "max_level": 3, "effect": lambda: setattr(player, "shot_damage", player.shot_damage + 1)},
+    {"name": "Quicker Shots", "cost": "0030", "level": 0, "max_level": 5, "effect": lambda: setattr(player, "shot_cool", player.shot_cool - 100)},
+    {"name": "Evasion", "cost": "0035", "level": 0, "max_level": 10, "effect": lambda: setattr(player, "evasion", player.evasion + 0.05)},
+    {"name": "Swiftness", "cost": "0025", "level": 0, "max_level": 4, "effect": lambda: setattr(player, "speed", player.speed + 1)}
+]
+
+for u in save_data["upgrades"]:
+    for i in range(len(upgrades)):
+        if upgrades[i]["name"] == u:
+            upgrades[i]["level"] = save_data["upgrades"][u]
+
+visible_upgrades = [0, 1, 2, 3, 4]
+
+for u in upgrades:
+    for l in range(u["level"]):
+        u["effect"]()
+
 # Mainloop
+reset = False
 running = True
 while running:
     if game_state == "Menu":
@@ -1880,13 +2314,22 @@ while running:
                     game_state = "Fight"
                 if event.key == pygame.K_r:
                     random_bosses = not random_bosses
+                if event.key == pygame.K_m:
+                    game_state = "Upgrades"
+                if event.key == pygame.K_ESCAPE:
+                    answer = messagebox.askyesno("Reset Save", "Are you sure you want to reset your save? \n\n This action cannot be undone. \n This action will close the game.")
+                    if answer:
+                        reset = True
+                        running = False
+
         
-        screen.fill(BLACK)
+        screen.fill(BG)
 
         screen.blit(title_font.render("The Dungeon Lurks", True, WHITE), (0, 0))
         screen.blit(subtitle_font.render(f"v{game_version}: {update_name}", True, WHITE), (0, 48))
         screen.blit(subtitle_font.render("Press SPACE to Begin!", True, WHITE), (88, 256))
         screen.blit(note_font.render(f"Randomised Bosses: {random_bosses} | Press R to Toggle.", True, WHITE), (0, 96))
+        screen.blit(note_font.render("Press M to open Upgrades!", True, WHITE), (0, 120))
 
         pygame.display.flip()
         clock.tick(FPS)
@@ -1896,24 +2339,37 @@ while running:
             if event.type == pygame.QUIT:
                 running = False
         
-        if boss == None or boss.health <= 0 and len(boss_list) > 0:
-            player.health = player.max_health
-            player.ult_used = False
-            if random_bosses: boss = boss_list.pop(randint(0, len(boss_list) -1))
-            else: boss = boss_list.pop(0)
-            boss.add(main_group)
+        if redness < max(0, 128 - int(255/player.max_health * player.health)) // 4: redness = max(0, 128 - int(255/player.max_health * player.health)) // 3
+        if redness > max(0, 128 - int(255/player.max_health * player.health)) // 4: redness -= 1
+        if redness < 0: redness = 0
+        if redness > 255: redness = 255
         
-        if len(boss_list) == 0:
-            running = False
-            print("ALL BOSSES DEFEATED")
+        if boss == None or boss.health <= 0:
+            player.health = min(int(player.health * 1.2), player.max_health)
+            player.ult_used = False
+            try:
+                boss.update()
+            except AttributeError:
+                pass
+            for x in main_group:
+                x.abort()
+            try:
+                if random_bosses: boss = boss_list.pop(randint(0, len(boss_list) -1))
+                else: boss = boss_list.pop(0)
+                boss.add(main_group)
+                boss.shot_time = pygame.time.get_ticks() + 500
+                boss.super_time = pygame.time.get_ticks() + 500
+                if hasattr(boss, "spec_time"): boss.spec_time = pygame.time.get_ticks() + 500
+                if hasattr(boss, "burst_time"): boss.burst_time = pygame.time.get_ticks() + 500
+                if hasattr(boss, "ability_time"): boss.ability_time = pygame.time.get_ticks() + 500
+                if hasattr(boss, "tp_time"): boss.tp_time = pygame.time.get_ticks() + 500
+            except IndexError:
+                player.kill()
             
         screen.fill(BG)
         
         main_group.update()
         main_group.draw(screen)
-    
-        if player not in main_group:
-            running = False
 
         ui_rect = pygame.Surface((screen.get_width(), 48))
         ui_rect.fill(UI)
@@ -1924,6 +2380,7 @@ while running:
         screen.blit(ui_line, (0, 44))
     
         screen.blit(font.render(f"HP: {player.health}/{player.max_health}", True, WHITE), (0, 0))
+        screen.blit(font.render(f"Money: {money}", True, WHITE), (0, 16))
     
         bossbar_base = pygame.Surface((320, 16))
         bossbar_base.fill(D_GREY)
@@ -1942,29 +2399,98 @@ while running:
         if hasattr(boss, "bullets"):
             bullet_text = font.render(f"Bullets: {boss.bullets}", True, WHITE)
             screen.blit(bullet_text, (boss.rect.x, boss.rect.y - 32))
+        
+        damage_rect = pygame.Surface((screen.get_width(), screen.get_height()), pygame.SRCALPHA)
+        damage_rect.fill((255, 0, 0, redness))
+        screen.blit(damage_rect, (0, 0))
+
+        if player not in main_group:
+            game_state = "Menu"
+            player.health = player.max_health
+            for i in main_group:
+                i.abort()
+            main_group.add(player)
+            boss = None
+            reset_bosses()
+            player.rect.center = (16, 464)
     
         pygame.display.flip()
         clock.tick(FPS)
 
-    if game_state == "Upgrade":
+    if game_state == "Upgrades":
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False # TODO: Upgrade Game State + Upgrade Functionality
+                running = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    game_state = "Menu"
+                if event.key == pygame.K_UP:
+                    for x in range(len(visible_upgrades)):
+                        visible_upgrades[x] += 1
+                        if visible_upgrades[x] >= len(upgrades):
+                            visible_upgrades[x] = 0
+                        if visible_upgrades[x] < 0:
+                            visible_upgrades[x] = len(upgrades) - 1
+                if event.key == pygame.K_DOWN:
+                    for x in range(len(visible_upgrades)):
+                        visible_upgrades[x] -= 1
+                        if visible_upgrades[x] >= len(upgrades):
+                            visible_upgrades[x] = 0
+                        if visible_upgrades[x] < 0:
+                            visible_upgrades[x] = len(upgrades) - 1
+                if event.key == pygame.K_1:
+                    if money >= int(upgrades[visible_upgrades[0]]["cost"]) * (1.5 ** upgrades[visible_upgrades[0]]["level"]) and upgrades[visible_upgrades[0]]["level"] < upgrades[visible_upgrades[0]]["max_level"]:
+                        money -= int(int(upgrades[visible_upgrades[0]]["cost"]) * (1.5 ** upgrades[visible_upgrades[0]]["level"]))
+                        upgrades[visible_upgrades[0]]["level"] += 1
+                        money_display = recalc_money()
+                        upgrades[visible_upgrades[0]]["effect"]()
+                if event.key == pygame.K_2:
+                    if money >= int(upgrades[visible_upgrades[1]]["cost"]) * (1.5 ** upgrades[visible_upgrades[1]]["level"]) and upgrades[visible_upgrades[1]]["level"] < upgrades[visible_upgrades[1]]["max_level"]:
+                        money -= int(int(upgrades[visible_upgrades[1]]["cost"]) * (1.5 ** upgrades[visible_upgrades[1]]["level"]))
+                        upgrades[visible_upgrades[1]]["level"] += 1
+                        money_display = recalc_money()
+                        upgrades[visible_upgrades[1]]["effect"]()
         
-        if not selected:
-            selected = True
-            cards = choices(upgrade_pool, k=3)
-            card1, card2, card3 = cards[:3]
-            card1.rect.center = (90, 240)
-            card2.rect.center = (280, 240)
-            card3.rect.center = (470, 240)
-            upgrade_group.add(card1, card2, card3)
-        
-        upgrade_group.draw(screen)
-        upgrade_group.update()
+        screen.fill(BG)
+    
+        screen.blit(title_font.render("Upgrades", True, WHITE), (0, 0))
+        screen.blit(subtitle_font.render(f"v{game_version}: {update_name}", True, WHITE), (0, 48))
+        screen.blit(note_font.render("Press ESC to return to Menu!", True, WHITE), (0, 88))
+        screen.blit(note_font.render(f"Money: {money_display}", True, WHITE), (0, 112))
+        cost_statement = ""
 
+        y = 144
+        num = 1
+        for u in visible_upgrades:
+            cost = "000" + str(int(int(upgrades[u]["cost"]) * (1.5 ** upgrades[u]["level"])))
+            cost_statement = ""
+            if int(list(cost)[-1]) > 0: cost_statement += f"{int(list(cost)[-1])} CP "
+            if int(list(cost)[-2]) > 0: cost_statement += f"{int(list(cost)[-2])} SP "
+            if int(list(cost)[-3]) > 0: cost_statement += f"{int(list(cost)[-3])} GP "
+            if int(list(cost)[-4]) > 0: cost_statement += f"{int(list(cost)[-4])} PP "
+            screen.blit(note_font.render(f"{upgrades[u]["name"]} | Lv. {upgrades[u]["level"]}/{upgrades[u]["max_level"]} | {cost_statement}", True, WHITE), (24, y))
+            screen.blit(note_font.render(f"Press {num} to Buy.", True, WHITE), (24, y + 24))
+            y += 64
+            num += 1
+    
         pygame.display.flip()
         clock.tick(FPS)
+
+save_data["copper"] = money % 10
+save_data["silver"] = (money % 100) // 10
+save_data["gold"] = (money % 1000) // 100
+save_data["platinum"] = money // 1000
+
+for u in upgrades:
+    for i in save_data["upgrades"]:
+        if i == u["name"]:
+            save_data["upgrades"][u["name"]] = u["level"]
+
+if reset:
+    save_data = {"copper": 0, "silver": 0, "gold": 0, "platinum": 0, "upgrades": {"Health Boost": 0, "Rocketing Shots": 0, "Stronger Shots": 0, "Quicker Shots": 0, "Evasion": 0, "Swiftness": 0}}
+
+with open("save.json", "w") as f:
+    json.dump(save_data, f, indent=4)
 
 pygame.time.delay(500)
 pygame.quit()
